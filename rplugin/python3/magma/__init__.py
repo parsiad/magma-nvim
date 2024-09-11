@@ -1,16 +1,16 @@
-from typing import Optional, Tuple, Dict, List, Any
 import json
 import os
+from typing import Any, Dict, List, Optional, Tuple
 
 import pynvim
-from pynvim import Nvim
-
-from magma.options import MagmaOptions
-from magma.utils import MagmaException, nvimui, DynamicPosition, Span
 from magma.images import Canvas, get_canvas_given_provider
-from magma.runtime import get_available_kernels
+from magma.io import MagmaIOError, get_default_save_file, load, save
 from magma.magmabuffer import MagmaBuffer
-from magma.io import MagmaIOError, save, load, get_default_save_file
+from magma.options import MagmaOptions
+from magma.outputbuffer import OutputBuffer
+from magma.runtime import get_available_kernels
+from magma.utils import DynamicPosition, MagmaException, Span, nvimui
+from pynvim import Nvim
 
 
 @pynvim.plugin
@@ -152,7 +152,7 @@ class Magma:
 
         return magma
 
-    @pynvim.command("MagmaInit", nargs="?", sync=True)  # type: ignore
+    @pynvim.command("MagmaInit", nargs="?", sync=True, complete='file')  # type: ignore
     @nvimui  # type: ignore
     def command_init(self, args: List[str]) -> None:
         self._initialize_if_necessary()
@@ -223,12 +223,30 @@ class Magma:
 
         magma.run_code(code, span)
 
+    def _do_evaluate_expr(self, expr):
+        self._initialize_if_necessary()
+
+        magma = self._get_magma(True)
+        assert magma is not None
+        bufno = self.nvim.current.buffer.number
+        span = Span(
+            DynamicPosition(self.nvim, self.extmark_namespace, bufno, 0, 0),
+            DynamicPosition(self.nvim, self.extmark_namespace, bufno, 0, 0),
+        )
+        magma.run_code(expr, span)
+
     @pynvim.command("MagmaEnterOutput", sync=True)  # type: ignore
     @nvimui  # type: ignore
     def command_enter_output_window(self) -> None:
         magma = self._get_magma(True)
         assert magma is not None
         magma.enter_output()
+
+    @pynvim.command("MagmaEvaluateArgument", nargs=1, sync=True)
+    @nvimui
+    def commnand_magma_evaluate_argument(self, expr) -> None:
+        assert len(expr) == 1
+        self._do_evaluate_expr(expr[0])
 
     @pynvim.command("MagmaEvaluateVisual", sync=True)  # type: ignore
     @nvimui  # type: ignore
@@ -452,3 +470,23 @@ class Magma:
         )
 
         self._do_evaluate(span)
+
+    @pynvim.function("MagmaDefineCell", sync=True)
+    def function_magma_define_cell(self, args: List[int]) -> None:
+        if not args:
+            return
+
+        self._initialize_if_necessary()
+        magma = self._get_magma(True)
+        assert magma is not None
+
+        start = args[0]
+        end = args[1]
+        bufno = self.nvim.current.buffer.number
+        span = Span(
+            DynamicPosition(
+                self.nvim, self.extmark_namespace, bufno, start - 1, 0
+            ),
+            DynamicPosition(self.nvim, self.extmark_namespace, bufno, end - 1, -1),
+        )
+        magma.outputs[span] = OutputBuffer(self.nvim, self.canvas, self.options)

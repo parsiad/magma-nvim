@@ -16,6 +16,10 @@ Magma is a NeoVim plugin for running code interactively with Jupyter.
     - [`cairosvg`](https://cairosvg.org/) (for displaying SVG images)
     - [`pnglatex`](https://pypi.org/project/pnglatex/) (for displaying TeX formulas)
     - `plotly` and `kaleido` (for displaying Plotly figures)
+    - `pyperclip` if you want to use `magma_copy_output`
+- For .NET (C#, F#)
+    - `dotnet tool install -g Microsoft.dotnet-interactive`
+    - `dotnet interactive jupyter install`
 
 You can do a `:checkhealth` to see if you are ready to go.
 
@@ -58,6 +62,37 @@ let g:magma_image_provider = "ueberzug"
 **Note:** Key mappings are not defined by default because of potential conflicts -- the user should decide which keys they want to use (if at all).
 
 **Note:** The options that are altered here don't have these as their default values in order to provide a simpler (albeit perhaps a bit more inconvenient) UI for someone who just added the plugin without properly reading the README.
+
+To make initialisation of kernels easier, you can add these commands:
+
+```lua
+function MagmaInitPython()
+    vim.cmd[[
+    :MagmaInit python3
+    :MagmaEvaluateArgument a=5
+    ]]
+end
+
+function MagmaInitCSharp()
+    vim.cmd[[
+    :MagmaInit .net-csharp
+    :MagmaEvaluateArgument Microsoft.DotNet.Interactive.Formatting.Formatter.SetPreferredMimeTypesFor(typeof(System.Object),"text/plain");
+    ]]
+end
+
+function MagmaInitFSharp()
+    vim.cmd[[
+    :MagmaInit .net-fsharp
+    :MagmaEvaluateArgument Microsoft.DotNet.Interactive.Formatting.Formatter.SetPreferredMimeTypesFor(typeof<System.Object>,"text/plain")
+    ]]
+end
+
+vim.cmd[[
+:command MagmaInitPython lua MagmaInitPython()
+:command MagmaInitCSharp lua MagmaInitCSharp()
+:command MagmaInitFSharp lua MagmaInitFSharp()
+]]
+```
 
 ## Usage
 
@@ -140,6 +175,14 @@ nnoremap <expr> <LocalLeader>r nvim_exec('MagmaEvaluateOperator', v:true)
 ```
 
 Upon using this mapping, you will enter operator mode, with which you will be able to select text you want to execute. You can, of course, hit ESC to cancel, as usual with operator mode.
+
+#### MagmaEvaluateArgument
+
+Evaluate the text following this command. Could be used for some automation (e. g. run something on initialization of a kernel).
+
+```vim
+:MagmaEvaluateArgument a=5;
+```
 
 #### MagmaReevaluateCell
 
@@ -307,6 +350,12 @@ Where to save/load with [`:MagmaSave`](#magmasave) and [`:MagmaLoad`](#magmaload
 
 The generated file is placed in this directory, with the filename itself being the buffer's name, with `%` replaced by `%%` and `/` replaced by `%`, and postfixed with the extension `.json`.
 
+### `g:magma_copy_output`
+
+Defaults to `v:false`.
+
+To copy the evaluation output to clipboard automatically.
+
 ### [DEBUG] `g:magma_show_mimetype_debug`
 
 Defaults to `v:false`.
@@ -339,6 +388,10 @@ Here is a list of the currently handled mimetypes:
 - `text/latex`: A LaTeX formula. Rendered into a PNG with [pnglatex](https://pypi.org/project/pnglatex/) and shown with [Ueberzug](https://github.com/seebye/ueberzug).
 
 This already provides quite a bit of basic functionality. As development continues, more mimetypes will be added.
+
+### Correct progress bars and alike stuff
+
+![](./caret.gif)
 
 ### Notifications
 

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from queue import Empty as EmptyQueueException
 import os
 import tempfile
+import json
 
 import jupyter_client
 
@@ -15,6 +16,7 @@ from magma.outputchunks import (
     TextOutputChunk,
     OutputStatus,
     to_outputchunk,
+    clean_up_text
 )
 
 
@@ -39,20 +41,40 @@ class JupyterRuntime:
         self.state = RuntimeState.STARTING
         self.kernel_name = kernel_name
 
-        self.kernel_manager = jupyter_client.manager.KernelManager(
-            kernel_name=kernel_name
-        )
-        self.kernel_manager.start_kernel()
-        self.kernel_client = self.kernel_manager.client()
-        assert isinstance(
-            self.kernel_client,
-            jupyter_client.blocking.client.BlockingKernelClient,
-        )
-        self.kernel_client.start_channels()
+        if ".json" not in self.kernel_name:
 
-        self.allocated_files = []
+            self.external_kernel = True
+            self.kernel_manager = jupyter_client.manager.KernelManager(
+                kernel_name=kernel_name
+            )
+            self.kernel_manager.start_kernel()
+            self.kernel_client = self.kernel_manager.client()
+            assert isinstance(
+                self.kernel_client,
+                jupyter_client.blocking.client.BlockingKernelClient,
+            )
+            self.kernel_client.start_channels()
 
-        self.options = options
+            self.allocated_files = []
+
+            self.options = options
+
+        else:
+            kernel_file = kernel_name
+            self.external_kernel = True
+            # Opening JSON file
+            kernel_json = json.load(open(kernel_file))
+            # we have a kernel json
+            self.kernel_manager = jupyter_client.manager.KernelManager(
+                    kernel_name=kernel_json["kernel_name"]
+                    )
+            self.kernel_client = self.kernel_manager.client()
+
+            self.kernel_client.load_connection_file(connection_file=kernel_file)
+
+            self.allocated_files = []
+
+            self.options = options
 
     def is_ready(self) -> bool:
         return self.state.value > RuntimeState.STARTING.value
@@ -62,7 +84,8 @@ class JupyterRuntime:
             if os.path.exists(path):
                 os.remove(path)
 
-        self.kernel_client.shutdown()
+        if self.external_kernel is False:
+            self.kernel_client.shutdown()
 
     def interrupt(self) -> None:
         self.kernel_manager.interrupt_kernel()
@@ -96,21 +119,31 @@ class JupyterRuntime:
     def _tick_one(
         self, output: Output, message_type: str, content: Dict[str, Any]
     ) -> bool:
+
+        def copy_on_demand(content_ctor):
+            if self.options.copy_output:
+                import pyperclip
+                if type(content_ctor) is str:
+                    pyperclip.copy(content_ctor)
+                else:
+                    pyperclip.copy(content_ctor())
+
         if output._should_clear:
             output.chunks.clear()
             output._should_clear = False
 
         if message_type == "execute_input":
             output.execution_count = content["execution_count"]
-            assert output.status != OutputStatus.DONE
-            if output.status == OutputStatus.HOLD:
-                output.status = OutputStatus.RUNNING
-            elif output.status == OutputStatus.RUNNING:
-                output.status = OutputStatus.DONE
-            else:
-                raise ValueError(
-                    "bad value for output.status: %r" % output.status
-                )
+            if self.external_kernel is False:
+                assert output.status != OutputStatus.DONE
+                if output.status == OutputStatus.HOLD:
+                    output.status = OutputStatus.RUNNING
+                elif output.status == OutputStatus.RUNNING:
+                    output.status = OutputStatus.DONE
+                else:
+                    raise ValueError(
+                        "bad value for output.status: %r" % output.status
+                    )
             return True
         elif message_type == "status":
             execution_state = content["execution_state"]
@@ -129,6 +162,8 @@ class JupyterRuntime:
             return False
         elif message_type == "execute_result":
             self._append_chunk(output, content["data"], content["metadata"])
+            if 'text/plain' in content['data']:
+                copy_on_demand(content["data"]['text/plain'])
             return True
         elif message_type == "error":
             output.chunks.append(
@@ -136,9 +171,11 @@ class JupyterRuntime:
                     content["ename"], content["evalue"], content["traceback"]
                 )
             )
+            copy_on_demand(lambda: "\n\n".join(map(clean_up_text, content["traceback"])))
             output.success = False
             return True
         elif message_type == "stream":
+            copy_on_demand(content["text"])
             output.chunks.append(TextOutputChunk(content["text"]))
             return True
         elif message_type == "display_data":
